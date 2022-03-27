@@ -1,6 +1,6 @@
 # Mechanical-Public
 
-In this project, the company wanted to build a prediction model to optimize the use of raw materials in manufacturing. They needed to reduce costs by reducing the use of the most expensive raw material in the manufacturing process without compromising the mechanical properties of their product. However, the cost of achieving this goal by trial & error would have an enormous cost as each trial costs around $100,000. 
+In this project, the company wanted to build a prediction model to optimize the use of raw materials in manufacturing. They needed to reduce costs by reducing the use of the most expensive raw material in the manufacturing process without compromising the mechanical properties of their product. However, the cost of achieving this goal by trial & error would have been enormous as each trial costs around $100,000. 
 ​
 To achieve this goal, I used R to explore the manufacturing data including chemical compositions & the resulting mechanical properties to build a linear regression prediction model.
 ​
