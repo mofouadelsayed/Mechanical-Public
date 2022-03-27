@@ -1,0 +1,466 @@
+---
+title: "Public Data Mechanical Properties Prediction Model"
+author: "Mohamed Elsayed"
+date: "February 1^st^, 2022"
+header-includes:
+   - \usepackage[default]{sourcesanspro}
+   - \usepackage[T1]{fontenc}
+mainfont: SourceSansPro
+output: pdf_document
+---
+
+
+```{r Libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(scales)
+library(caret)
+library(readxl)
+library(corrplot)
+library(kableExtra)
+library(readr)
+```
+
+```{r}
+#######################################################################################
+# NOTE: Data in this report has been altered to protect information privacy
+######################################################################################
+```
+
+
+### I. Introduction
+This is a project to build a machine learning algorithm using Linear Regression to predict mechanical properties based on 3 main elements (A, B & J). The goal is to be able to decrease B & J as much as possible without compromising product properties like One, Two & Three. Current production utilizes the following compositions for the target elements during production.  
+1. A : 0.22   
+2. B : 1.10  
+3. J : 0.04  
+
+**\textcolor{rgb:red, 43;green,74;blue,148}{Target Mechanical Properties:}**  
+1. One: MIN 405  
+2. Two: MAX 545  
+3. Three: MIN 12  
+
+Raw data has been collected for product test results starting February 2003 until December 2021. Test data includes various grades for multiple product sizes. After data exploration, some of these grades will be filtered out to keep only the grade & sizes relevant to this project.
+
+```{r Import, message=FALSE, warning=FALSE, include=FALSE}
+# - Import
+# MAC
+Product_data <- read_excel("~/Documents/Data Science/Projects/Tensile/Tensile data-public.xlsx")
+unfiltered<- Product_data
+# PC
+#Product_data <- read_excel("~/My Stuff/Harvard/Tensile/Tensile data-public.xlsx")
+#unfiltered<- Product_data
+```
+
+
+```{r Save, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# - Save
+saveRDS(Product_data, "Product_data.rds")
+
+save.image("product_environment.Rdata")
+```
+
+
+```{r Load, eval=FALSE, include=FALSE}
+# - Load
+Product_data<- readRDS("Product_data.rds")
+
+load("product_environment.Rdata")
+```
+
+### II. Exploring RAW data to identify outliers & irrelevant data  
+
+Below are plots showing that there is no clear distinction between product sizes when it comes to chemistry composition or mechanical properties. This shows that there is no need to build a separate prediction model for every product size. Also, based on the size distribution expressed in our data below there appears to be an advantage of using this method as there are some sizes with MUCH less observations to train the model than others.
+```{r Summary, echo=FALSE, message=FALSE, warning=FALSE}
+table_summary<- Product_data
+table_summary<- table_summary[,1:50]
+table_summary<- table_summary %>% filter(test_no== "F2")
+table_summary<- table_summary %>% filter(gcode== "400B") %>% filter(a<0.31) %>% filter(b< 1.26) %>% filter(one< 526) %>% filter(two< 701) %>% filter(three< 25.1)
+
+table_summary %>% group_by(scode) %>% summarise(n=n()) %>% arrange(desc(n)) %>% knitr::kable() %>% column_spec(2, border_right = T) %>% column_spec(1, border_left = T)
+```
+
+
+```{r Size_Segragation_Plots, echo=FALSE, message=FALSE, warning=FALSE}
+# No segregation at all between sizes
+Product_data %>% ggplot(aes(a, one, color= scode)) + geom_point() + theme_light() +  theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653"), panel.border = element_blank(), axis.title = element_text(size = 10, face = "bold", colour = "#264653")) + ggtitle("One Values per A % for each size") + xlab("A") + ylab("One")
+
+Product_data %>% ggplot(aes(a, scode, color= scode)) + geom_point() + theme_light() +  theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), panel.border = element_blank(), axis.line = element_line(), axis.title = element_text(size = 10, face = "bold", colour = "#264653")) + ggtitle("A per Size") + xlab("A") + ylab("Size")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+a_size_dist<- unfiltered %>% ggplot(aes(a, scode, color= scode)) + geom_point() + theme_light() +  theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), panel.border = element_blank(), axis.line = element_line(), axis.title = element_text(size = 10, face = "bold", colour = "#264653")) + ggtitle("A per Size") + xlab("A") + ylab("Size")
+
+b_size_dist<- unfiltered %>% ggplot(aes(b, scode, color= scode)) + geom_point() + theme_light() +  theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), panel.border = element_blank(), axis.line = element_line(), axis.title = element_text(size = 10, face = "bold", colour = "#264653")) + ggtitle("B per Size") + xlab("B%") + ylab("Size")
+
+j_size_dist<- unfiltered %>% ggplot(aes(j, scode, color= scode)) + geom_point() + theme_light() +  theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), panel.border = element_blank(), axis.line = element_line(), axis.title = element_text(size = 10, face = "bold", colour = "#264653")) + ggtitle("J per Size") + xlab("J") + ylab("Size")
+```
+
+\newpage 
+- RAW Data plots below show several outliers & unrealistic data. **EX:** A above 0.5, Mechanical properties like \textcolor{red}{TWO > 6,000} & Three > 50%  
+
+```{r RAW_plots, echo=FALSE, message=FALSE, warning=FALSE, fig.height=25, fig.width=30, fig.align='center'}
+# A
+a_one_raw_plot<- unfiltered %>% ggplot(aes(a, one)) + geom_point(color= "#264653") + geom_smooth(method= "lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("A One RAW") + scale_y_continuous(labels = comma) + ylab("One") + xlab("A") + theme_light()
+
+a_two_raw_plot<- unfiltered %>% ggplot(aes(a, two)) + geom_point(color= "#f4a261") + geom_smooth(method="lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("A Two RAW") + scale_y_continuous(labels = comma) + ylab("TWO") + xlab("A") + theme_light()
+
+a_three_raw_plot<- unfiltered %>% ggplot(aes(c, three)) + geom_point(color= "#2a9d8f") + geom_smooth(method= "lm", color= "#9d0208")+ theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("A Three RAW") + scale_y_continuous(labels = comma) + ylab("Three") + xlab("A") + theme_light()
+
+# B
+b_one_raw_plot<- unfiltered %>% ggplot(aes(b, one)) + geom_point(color= "#264653") + geom_smooth(method= "lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("B One RAW") + scale_y_continuous(labels = comma) + ylab("One") + xlab("B") + theme_light()
+
+b_two_raw_plot<- unfiltered %>% ggplot(aes(b, two)) + geom_point(color= "#f4a261") + geom_smooth(method="lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("B Two RAW") + scale_y_continuous(labels = comma) + ylab("TWO") + xlab("B") + theme_light()
+
+b_three_raw_plot<- unfiltered %>% ggplot(aes(b, three)) + geom_point(color= "#2a9d8f") + geom_smooth(method= "lm", color= "#9d0208")+ theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("B Two RAW") + scale_y_continuous(labels = comma) + ylab("Three") + xlab("B") + theme_light()
+
+# J
+j_one_raw_plot<- unfiltered %>% ggplot(aes(j, one)) + geom_point(color= "#264653") + geom_smooth(method= "lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("J One RAW") + scale_y_continuous(labels = comma) + ylab("One") + xlab("J") + theme_light()
+
+j_two_raw_plot<- unfiltered %>% ggplot(aes(j, two)) + geom_point(color= "#f4a261") + geom_smooth(method="lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("J Two RAW") + scale_y_continuous(labels = comma) + ylab("TWO") + xlab("J") + theme_light()
+
+j_three_raw_plot<- unfiltered %>% ggplot(aes(v, three)) + geom_point(color= "#2a9d8f") + geom_smooth(method= "lm", color= "#9d0208")+ theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("J Three RAW") + scale_y_continuous(labels = comma) + ylab("Three") + xlab("J") + theme_light()
+
+comparison_plots_RAW<- ggarrange(a_one_raw_plot, a_two_raw_plot, a_three_raw_plot, b_one_raw_plot, b_two_raw_plot, b_three_raw_plot, j_one_raw_plot, j_two_raw_plot, j_three_raw_plot, nrow=3, ncol=3)
+comparison_plots_RAW
+```
+
+### III. Data Preparation
+Based on the data exploration done above, the following filters will be applied to the data to exclude irrelevant chemistry & mechanical properties outside of the desired range for this project.  
+
+**\textcolor{rgb:red, 43;green,74;blue,148}{Filters Applied are as follows:}**  
+1. Grade: 400B  
+2. A =< 0.3  
+3. B =< 1.25  
+4. J: None Needed  
+5. One: < 525   
+6. Two: =< 700  
+7. Three: =<25  
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Original
+main<- Product_data
+
+# Remove last 9 columns
+Product_data<- Product_data[,1:50]
+
+# Filter for F2
+Product_data<- Product_data %>% filter(test_no== "F2")
+
+# Unique grades
+unique(Product_data$gcode)
+
+# Grades that are not 400W out of the total 12,637 records
+Product_data %>% filter(!gcode== "400B") %>% count()
+Product_data %>% filter(!gcode== "400B") %>% ggplot(aes(a, one, color= scode)) + geom_point()
+
+# Raw (Filtered for only F2 & remove unused columns)
+unfiltered<- Product_data
+
+# Filter for required parameters
+Product_data<- Product_data %>% filter(gcode== "400B") %>% filter(a<0.31) %>% filter(b< 1.26) %>% filter(one< 526) %>% filter(two< 701) %>% filter(three< 25.1)
+
+all_elements<- Product_data
+all_elements<- all_elements %>% select(one, two, three, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u,v)
+```
+
+\newpage 
+- FILTERED Data Plots Below are the plots representing the data after being filtered. This is the data that will be used to feed the machine learning algorithm for training.  
+
+```{r Filtered_plots, echo=FALSE, fig.height=25, fig.width=30, fig.align='center', message=FALSE, warning=FALSE}
+#A
+a_one_plot_filtered<- Product_data %>% ggplot(aes(a, one)) + geom_point(color= "#264653") + geom_smooth(method= "lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("A One Filtered") + scale_y_continuous(labels = comma) + ylab("One") + xlab("A") + theme_light()
+
+a_two_plot_filtered<- Product_data %>% ggplot(aes(a, two)) + geom_point(color= "#f4a261") + geom_smooth(method="lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("A Two Filtered") + scale_y_continuous(labels = comma) + ylab("TWO") + xlab("A") + theme_light()
+
+a_three_plot_filtered<- Product_data %>% ggplot(aes(a, three)) + geom_point(color= "#2a9d8f") + geom_smooth(method= "lm", color= "#9d0208")+ theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("A Three Filtered") + scale_y_continuous(labels = comma) + ylab("Three") + xlab("A") + theme_light()
+
+#B
+b_one_plot_filtered<- Product_data %>% ggplot(aes(b, one)) + geom_point(color= "#264653") + geom_smooth(method= "lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("B One Filtered") + scale_y_continuous(labels = comma) + ylab("One") + xlab("B") + theme_light()
+
+b_two_plot_filtered<- Product_data %>% ggplot(aes(b, two)) + geom_point(color= "#f4a261") + geom_smooth(method="lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("B Two Filtered") + scale_y_continuous(labels = comma) + ylab("TWO") + xlab("B") + theme_light()
+
+b_three_plot_filtered<- Product_data %>% ggplot(aes(b, three)) + geom_point(color= "#2a9d8f") + geom_smooth(method= "lm", color= "#9d0208")+ theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("B Three Filtered") + scale_y_continuous(labels = comma) + ylab("Three") + xlab("B") + theme_light()
+
+#J
+j_one_plot_filtered<- Product_data %>% ggplot(aes(j, one)) + geom_point(color= "#264653") + geom_smooth(method= "lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("J One Filtered") + scale_y_continuous(labels = comma) + ylab("One") + xlab("J") + theme_light()
+
+j_two_plot_filtered<- Product_data %>% ggplot(aes(j, two)) + geom_point(color= "#f4a261") + geom_smooth(method="lm", color= "#9d0208") + theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("J Two Filtered") + scale_y_continuous(labels = comma) + ylab("TWO") + xlab("J") + theme_light()
+
+j_three_plot_filtered<- Product_data %>% ggplot(aes(j, three)) + geom_point(color= "#2a9d8f") + geom_smooth(method= "lm", color= "#9d0208")+ theme(plot.title = element_text(size = 14, face = "bold", colour = "#264653", margin = margin(0,0,15,0)), axis.title = element_text(size = 12, face = "bold", colour = "#264653"), axis.text = element_text(face= "bold", color= "#264653"), panel.border = element_blank(), panel.background = element_blank()) + scale_fill_manual(values = c("#264653", "#f4a261")) + ggtitle("J Three Filtered") + scale_y_continuous(labels = comma) + ylab("Three") + xlab("J") + theme_light()
+
+comparison_plots_FILTERED<- ggarrange(a_one_plot_filtered, a_two_plot_filtered, a_three_plot_filtered, b_one_plot_filtered, b_two_plot_filtered, b_three_plot_filtered, j_one_plot_filtered, j_two_plot_filtered, j_three_plot_filtered, nrow=3, ncol=3)
+comparison_plots_FILTERED
+```
+
+\newpage 
+**\textcolor{rgb:red, 43;green,74;blue,148}{Correlation Plots}**   
+Below are two correlation plots showing how each of the elements of interest correlate to each of the mechanical properties. The darker the dot, the higher the correlation between both variables. **\textcolor{rgb:red,43;green,74;blue,148}{Blue}** dot means +Ve correlation, **\textcolor{orange}{Orange}** dot means -Ve correlation.  
+
+**First Plot:** Correlation of mechanical properties to ALL elements  
+**Second Plot:** Correlation of mechanical properties to ONLY the 3 target elements (A, B, J)   
+
+It is clear from the plots below that no single element has a significant correlation value with any of the mechanical properties. The second plot shows a slight correlation between (A & Two), (B & One) & a very weak inverse correlation between(J & Two)
+
+```{r Correlation, echo=FALSE, fig.align='center', message=FALSE, warning=FALSE, fig.width=8}
+
+# Correlation RAW
+#correlation_raw<- unfiltered %>% select(one, two, three, c, mn, v) %>% cor()
+#corrplot::corrplot(correlation_raw, type = "upper", tl.col = "black")
+
+# Correlation ALL Minerals
+correlation_ALL<- Product_data %>% select(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, one, two, three)  %>% cor()
+corrplot::corrplot(correlation_ALL, type = "upper", tl.col = "#264653", title = "Correlation of mechanical properties to ALL minerals ", tl.cex = 0.5, mar=c(0,0,2,0))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align='center', fig.width=8}
+# Correlation plot after filtering
+correlation_filtered<- Product_data %>% select(one, two, three, a, b, j) %>% cor()
+corrplot::corrplot(correlation_filtered, type = "upper", tl.col = "#264653", title = "Correlation of mechanical properties to ONLY the 3 target minerals (A, B, J)",tl.cex = 1, mar=c(0,0,2,0))
+```
+
+### IV. Building Algorithm
+The dataset will be split in 2 portions. One portion will contain 80% of the data & this will be used for training the algorithm. The second portion will contain the remaining 20% of the data & this will be used for testing (verification) of the algorithm prediction results.   
+```{r Split, message=FALSE, warning=FALSE, include=FALSE}
+index<- createDataPartition(Product_data$one, times = 1, p=0.8, list= FALSE)
+train<- Product_data[index,]
+test<- Product_data[-index,]
+
+index_all<- createDataPartition(all_elements$one, times = 1, p=0.8, list = FALSE)
+train_all<- all_elements[index_all,]
+test_all<- all_elements[-index_all,]
+```
+
+
+```{r RMSE, message=FALSE, warning=FALSE, include=FALSE}
+# - RMSE 
+RMSE<- function(actual, predicted){
+     sqrt(mean((actual-predicted)^2))
+ }
+```
+
+#### Linear Regression model data  
+
+- Linear Model predicting **ONE** based on chemistries. Model accuracy around 89% when limiting the difference between predicted & actual results to only 5%. *RMSE for ONE predicted by this model is 12.53*.
+
+```{r lm_one, message=FALSE, warning=FALSE, include=FALSE}
+fit_one_3<- train %>% lm(one ~ a + b + j, data=.)
+prediction_one<- predict(fit_one_3, test)
+
+lm_model_one_results<- data.frame(Predicted= prediction_one, Actual= test$one, Good= ifelse(sqrt((prediction_one-test$one)^2)<20,1,0))               # ~ 5%
+mean(lm_model_one_results$Good)
+
+RMSE(test$one, prediction_one)
+mean(test$one)
+mean(prediction_one)
+
+wanted<- data.frame(a= 0.3, b= 0.9, j=0.020)
+predict(fit_one_3, wanted)
+
+###############################################################################################################
+
+fit_one_all<- train_all %>% lm(one ~  a+ b+ c+ d+ e+ f+ g+ h+ i+ j+ k+ l+ m+ n+ o+ p+ q+ r+ s+ t+ u+ v, data=.)
+prediction_one_all<- predict(fit_one_all, test_all)
+lm_model_one_all_results<- data.frame(Predicted= prediction_one_all, Actual= test_all$one, Good= ifelse(sqrt((prediction_one_all - test_all$one)^2)<20,1,0))
+
+mean(test_all$one)
+mean(prediction_one_all)
+mean(lm_model_one_all_results$Good)
+
+RMSE(test_all$one, prediction_one_all)
+```
+
+
+- Linear Model predicting **TWO** based on chemistries. Model accuracy around 95% when limiting the difference between predicted & actual results to only 5%. *RMSE for TWO predicted by this model is 15.22*
+```{r lm_TWO, message=FALSE, warning=FALSE, include=FALSE}
+fit_two_3<- train %>% lm(two ~ a + b + j, data=.)
+prediction_two<- predict(fit_two_3, test)
+
+lm_model_two_results<- data.frame(Predicted= prediction_two, Actual= test$two, Good= ifelse(sqrt((prediction_two-test$two)^2)<30,1,0)) 
+mean(lm_model_two_results$Good)
+
+optimal<- data.frame(a= 0.21083, b= 0.7909, j=0.04125)
+wanted<- data.frame(a= 0.3, b= 0.9, j=0.020)
+predict(fit_two_3, optimal)
+
+RMSE(test$two, prediction_two)
+
+##########################################################################################################
+
+fit_two_all<- train_all %>% lm(two ~ a+ b+ c+ d+ e+ f+ g+ h+ i+ j+ k+ l+ m+ n+ o+ p+ q+ r+ s+ t+ u+ v, data=.)
+
+prediction_two_all<- predict(fit_two_all, test_all)
+lm_model_two_all_results<- data.frame(Predicted= prediction_two_all, Actual= test_all$two, Good= ifelse(sqrt((prediction_two_all - test_all$two)^2)<30,1,0))
+
+mean(test_all$two)
+mean(prediction_two_all)
+mean(lm_model_two_all_results$Good)
+
+RMSE(test_all$two, prediction_two_all)
+```
+
+
+- Linear Model predicting **THREE** based on chemistries. Model accuracy around 67% when limiting the the difference between predicted & actual results to around 10%. *RMSE for THREE predicted by this model is 1.7*
+```{r lm_elong, message=FALSE, warning=FALSE, include=FALSE}
+fit_three_3<- train %>% lm(three ~ a + b + j, data=.)
+prediction_three<- predict(fit_three_3, test)
+
+lm_model_three_results<- data.frame(Predicted= prediction_three, Actual= test$three, Good= ifelse(sqrt((prediction_three-test$three)^2)<1.7,1,0))
+mean(lm_model_three_results$Good)
+
+optimal<- data.frame(a= 0.21083, b= 0.7909, j=0.04125)
+wanted<- data.frame(a= 0.3, b= 0.9, j=0.020)
+predict(fit_three_3, optimal)
+
+RMSE(test$three, prediction_three)
+
+##########################################################################################################
+
+fit_three_all<- train_all %>% lm(three ~ a+ b+ c+ d+ e+ f+ g+ h+ i+ j+ k+ l+ m+ n+ o+ p+ q+ r+ s+ t+ u+ v, data=.)
+prediction_three_all<- predict(fit_three_all, test_all)
+
+lm_model_three_all_results<- data.frame(Predicted= prediction_three_all, Actual= test_all$three, Good= ifelse(sqrt((prediction_three_all - test_all$three)^2)<1.7,1,0))
+
+mean(test_all$three)
+mean(prediction_three_all)
+mean(lm_model_three_all_results$Good)
+
+RMSE(test_all$three, prediction_three_all)
+```
+
+```{r Actuals, message=FALSE, warning=FALSE, include=FALSE}
+# -Actual Testing Results
+Actual_E50314<- data.frame(Actual_One= 454, Actual_Two= 607, Actual_Three= 17.05)
+Actual_E50346<- data.frame(Actual_One= 442, Actual_Two= 591, Actual_Three= 19.35)
+Actual_E50616<- data.frame(Actual_One= 417, Actual_Two= 556, Actual_Three= 18.05)
+Actual_compete<- data.frame(Actual_One= 434, Actual_Two= 671, Actual_Three= 16.05)
+Actual_current<- data.frame(Actual_One= 454, Actual_Two= 613, Actual_Three= 18.47)
+```
+
+```{r Applying_model, message=FALSE, warning=FALSE, include=FALSE}
+# - Applying models to different chemistries
+Current<- data.frame(a=0.22, b=1.10, j=0.04)
+one_Current<- predict(fit_one_3, Current)
+two_Current<- predict(fit_two_3, Current)
+three_Current<- predict(fit_three_3, Current)
+Results_Current<- tibble(A = Current$a, B= Current$b, J= Current$j, One= round(one_Current, digits = 0), Two= round(two_Current, digits=0), Three= round(three_Current, digits=2), Actual_current, Remarks= "Current Chemistry") 
+
+compete<- data.frame(a=0.28, b=1.15, j=0.02)
+one_compete<- predict(fit_one_3, compete)
+two_compete<- predict(fit_two_3, compete)
+three_compete<- predict(fit_three_3, compete)
+Results_compete<- tibble(A = compete$a, B= compete$b, J= compete$j, One= round(one_compete, digits=0), Two= round(two_compete, digits=0), Three= round(three_compete, digits=2), Actual_compete, Remarks= "Competitor Chemistry")
+
+E50314<- data.frame(a=0.23, b= 1.04, j=0.04)
+one_E50314<- predict(fit_one_3, E50314)
+two_E50314<- predict(fit_two_3, E50314)
+three_E50314<- predict(fit_three_3, E50314)
+Results_E50314<- tibble(A = E50314$a, B= E50314$b, J= E50314$j, One= round(one_E50314, digits = 0), Two= round(two_E50314, digits=0), Three= round(three_E50314, digits=2), Actual_E50314, Remarks= "Heat E50314 Results 15M Verification")
+
+E50346<- data.frame(a= 0.21, b= 0.90, j= 0.043)
+one_E50346<- predict(fit_one_3, E50346)
+two_E50346<- predict(fit_two_3, E50346)
+three_E50346<- predict(fit_three_3, E50346)
+Results_E50346<- tibble(A = E50346$j, B= E50346$b, J= E50346$j, One= round(one_E50346, digits=0), Two= round(two_E50346, digits=0), Three= round(three_E50346, digits=2), Actual_E50346, Remarks= "Heat E50346 Results 35M Verification")
+
+E50616<- data.frame(a= 0.22, b= 0.74, j= 0.051)
+one_E50616<- predict(fit_one_3, E50616)
+two_E50616<- predict(fit_two_3, E50616)
+three_E50616<- predict(fit_three_3, E50616)
+Results_E50616<- tibble(A = E50616$a, B= E50616$b, J= E50616$j, One= round(one_E50616, digits=0), Two= round(two_E50616, digits=0), Three= round(three_E50616, digits = 2), Actual_E50616, Remarks= "Heat E50616 Results 55M Verification")
+
+proposed<- data.frame(a=0.20, b=0.75, j=0.015)
+one_proposed<- predict(fit_one_3, proposed)
+two_proposed<- predict(fit_two_3, proposed)
+three_proposed<- predict(fit_three_3, proposed)
+Results_proposed<- tibble(A = proposed$a, B= proposed$b, J= proposed$j, One= round(one_proposed, digits=0), Two= round(two_proposed, digits = 0), Three= round(three_proposed, digits = 2), Remarks= "Proposed Chemistry")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# - Applying models to ALL different chemistries
+Current_all<- data.frame(a=0.22, b=1.10, c=0.011, d=0.007, e=0.27, f=0.23, g=0.17, h=0.31, 
+                     i=0.066, j=0.04, k=0.001, l= 0.001, m=0.009, n=0.01, o=0.006,
+                     p=0.0006, q=0.0055, r=0.0004, s=0.001, t= 0.004, u=0.001, v=97.75)
+
+one_Current_all<- predict(fit_one_all, Current_all)
+two_Current_all<- predict(fit_two_all, Current_all)
+three_Current_all<- predict(fit_three_all, Current_all)
+Results_Current_all<- tibble(A = Current_all$a, B= Current_all$b, J= Current_all$j, One= round(one_Current_all, digits = 0), Two= round(two_Current_all, digits=0), Three= round(three_Current_all, digits=2), Actual_current, Remarks= "Current Chemistry") 
+
+compete_all<- data.frame(a=0.27, b=1.24, c=0.016, d=0.011, e=0.24, f=0.24, g=0.13, h=0.25, 
+                     i=0.048, j=0.018, k=0.001, l= 0.001, m=0.002, n=0.01, o=0.008,
+                     p=0.0003, q=0.0066, r=0.007, s=0, t= 0.004, u=0.001, v=97.5)
+
+one_compete_all<- predict(fit_one_all, compete_all)
+two_compete_all<- predict(fit_two_all, compete_all)
+three_compete_all<- predict(fit_three_all, compete_all)
+Results_compete_all<- tibble(A = compete_all$a, B= compete_all$b, J= compete_all$j, One= round(one_compete_all, digits=0), Two= round(two_compete_all, digits=0), Three= round(three_compete_all, digits=2), Actual_compete, Remarks= "Competitor Chemistry")
+
+E50314_all<- data.frame(a=0.23, b=1.04, c=0.012, d=0.015, e=0.22, f=0.19, g=0.13, h=0.23, 
+                     i=0.043, j=0.04, k=0.001, l= 0.001, m=0.002, n=0.009, o=0.005,
+                     p=0.0004, q=0.0075, r=0.006, s=0.001, t= 0.004, u=0.002, v=97.5)
+
+one_E50314_all<- predict(fit_one_all, E50314_all)
+two_E50314_all<- predict(fit_two_all, E50314_all)
+three_E50314_all<- predict(fit_three_all, E50314_all)
+Results_E50314_all<- tibble(A = E50314_all$a, B= E50314_all$b, J= E50314_all$j, One= round(one_E50314_all, digits = 0), Two= round(two_E50314_all, digits=0), Three= round(three_E50314_all, digits=2), Actual_E50314, Remarks= "Size 15 Results Verification")
+
+E50346_all<- data.frame(a=0.21, b=0.9, c=0.011, d=0.010, e=0.18, f=0.21, g=0.24, h=0.26, 
+                     i=0.050, j=0.043, k=0.001, l= 0.001, m=0.002, n=0.010, o=0.005,
+                     p=0.0014, q=0.0085, r=0.007, s=0, t= 0.004, u=0.001, v=97.85)
+
+one_E50346_all<- predict(fit_one_all, E50346_all)
+two_E50346_all<- predict(fit_two_all, E50346_all)
+three_E50346_all<- predict(fit_three_all, E50346_all)
+Results_E50346_all<- tibble(A = E50346_all$a, B= E50346_all$b, J= E50346_all$j, One= round(one_E50346_all, digits=0), Two= round(two_E50346_all, digits=0), Three= round(three_E50346_all, digits=2), Actual_E50346, Remarks= "Size 35 Results Verification")
+
+E50616_all<- data.frame(a=0.22, b=0.74, c=0.010, d=0.005, e=0.17, f=0.22, g=0.17, h=0.27, 
+                     i=0.072, j=0.051, k=0.001, l= 0.002, m=0.002, n=0.009, o=0.006,
+                     p=0.0002, q=0.0049, r=0.006, s=0.001, t= 0.004, u=0.002, v=98.05)
+
+one_E50616_all<- predict(fit_one_all, E50616_all)
+two_E50616_all<- predict(fit_two_all, E50616_all)
+three_E50616_all<- predict(fit_three_all, E50616_all)
+Results_E50616_all<- tibble(A = E50616_all$a, B= E50616_all$b, J= E50616_all$j, One= round(one_E50616_all, digits=0), Two= round(two_E50616_all, digits=0), Three= round(three_E50616, digits = 2), Actual_E50616, Remarks= "Size 55 Results Verification")
+
+proposed_all<- data.frame(a=0.20, b=0.75, c=0.011, d=0.007, e=0.27, f=0.23, g=0.17, h=0.31, 
+                     i=0.066, j=0.015, k=0.001, l= 0.001, m=0.009, n=0.01, o=0.006,
+                     p=0.0006, q=0.0055, r=0.0004, s=0.001, t= 0.004, u=0.001, v=97.75)
+
+one_proposed_all<- predict(fit_one_all, proposed_all)
+two_proposed_all<- predict(fit_two_all, proposed_all)
+three_proposed_all<- predict(fit_three_all, proposed_all)
+Results_proposed_all<- tibble(A = proposed_all$a, B= proposed_all$b, J= proposed_all$j, One= round(one_proposed_all, digits=0), Two= round(two_proposed_all, digits=0), Three= round(three_proposed_all, digits=2), Remarks= "Proposed Chemistry")
+
+```
+
+\newpage
+### V. Results   
+
+Below is a table containing multiple outputs of the prediction model.  
+
+**The first three results** are verification results for heats that were rolled through the BM after the data used for creating the prediction model was collected. This is a good test of the model's prediction capability. For ALL 3 heats verified, the mechanical properties predicted by the model based on C, Mn & V values were **\textcolor{rgb:red, 43;green,148;blue,71}{within 95\% Accuracy of the Actual results}** achieved from testing.
+
+**Fourth & Fifth results** are predictions based on an average of our current recipes & the recipe of a competitor
+
+**The Last result** is the prediction based on the Proposed Chemistry for production
+
+```{r Results, fig.align='center', message=FALSE, warning=FALSE, include=FALSE}
+Results<- bind_rows(Results_E50314, Results_E50346, Results_E50616, Results_Current, Results_compete, Results_proposed) %>% knitr::kable(align = "c", booktabs= T) %>% row_spec(3, hline_after = T) %>% row_spec(5, hline_after = T) %>% row_spec(6, bold = T) %>% column_spec(3, border_right =T) %>% column_spec(6, border_right =T) %>% column_spec(9, border_right =T) %>% kable_styling(latex_options="scale_down") %>% kable_styling(latex_options = "hold_position")
+Results
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align='center'}
+Results_all<- bind_rows(Results_E50314_all, Results_E50346_all, Results_E50616_all, Results_Current_all, Results_compete_all, Results_proposed_all) %>% knitr::kable(align = "c", booktabs= T) %>% row_spec(3, hline_after = T) %>% row_spec(5, hline_after = T) %>% row_spec(6, bold = T) %>% column_spec(3, border_right =T) %>% column_spec(6, border_right =T) %>% column_spec(9, border_right =T) %>% kable_styling(latex_options="scale_down") %>% kable_styling(latex_options = "hold_position")
+Results_all
+```
+
+
+### VI. Recommendation
+
+Based on the results above, Reducing A to 0.20, B to 0.75 & J to 0.015 would still result in a product that meets the minimum mechanical requirements for tensile testing. 
+
+**This is a significant decrease in Two by almost \textcolor{rgb:red, 43;green,148;blue,71}{32\%} & Three by almost \textcolor{rgb:red, 43;green,148;blue,71}{64\%}.**
+
+**\textcolor{red}{NOTE:}** Safety margins, mineral cut-off values & other mechanical properties need to be metallurgically verified before production.
+
